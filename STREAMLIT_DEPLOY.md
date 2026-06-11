@@ -37,3 +37,5 @@ ALPHA_VANTAGE_API_KEY = "your-alpha-vantage-key"
 ```
 
 Without secrets, the app will still run with a clearly labeled demo market-data snapshot.
+
+For local development, copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and paste your real keys there. The real `secrets.toml` file is ignored by Git and must not be committed.
