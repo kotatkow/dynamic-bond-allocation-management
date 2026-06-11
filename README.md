@@ -12,6 +12,12 @@ npm start
 
 Then open `http://localhost:3000`.
 
+If `npm` is not available on your Windows PATH, use the helper script:
+
+```powershell
+.\start-app.cmd
+```
+
 The static `index.html` can still be opened directly, but backend features such as market data, scenario history, and audit logs require the server.
 
 ## What It Does
@@ -58,6 +64,12 @@ Local persistence lives in `data/store.json`, which is intentionally ignored by 
 
 ```powershell
 npm test
+```
+
+If `npm` is not available:
+
+```powershell
+.\test-app.cmd
 ```
 
 Regression tests cover allocation normalization, policy caps, signal-driven duration changes, inflation tilts, and rebalance math.
