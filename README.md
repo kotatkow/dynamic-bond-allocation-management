@@ -6,6 +6,8 @@ This is decision-support software, not investment advice. Outputs are model-driv
 
 ## Run The App
 
+### Node Version
+
 ```powershell
 npm start
 ```
@@ -19,6 +21,16 @@ If `npm` is not available on your Windows PATH, use the helper script:
 ```
 
 The static `index.html` can still be opened directly, but backend features such as market data, scenario history, and audit logs require the server.
+
+### Streamlit Version
+
+This repo also includes a Streamlit app for cloud publishing:
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+For deployment instructions, see `STREAMLIT_DEPLOY.md`.
 
 ## What It Does
 
