@@ -112,7 +112,10 @@
             <article class="allocation-card">
               <div class="section-heading">
                 <h2>Target Allocation</h2>
-                <button id="resetButton" class="icon-button" title="Reset inputs" aria-label="Reset inputs">↺</button>
+                <div class="button-row">
+                  <button id="saveScenarioButton" class="text-button" type="button">Save Scenario</button>
+                  <button id="resetButton" class="icon-button" title="Reset inputs" aria-label="Reset inputs">R</button>
+                </div>
               </div>
               <div id="allocationBars" class="allocation-bars"></div>
             </article>
@@ -138,10 +141,26 @@
               <ul id="riskList"></ul>
             </article>
           </section>
+
+          <section class="analysis-layout">
+            <article class="allocation-card">
+              <div class="section-heading">
+                <h2>Market Data</h2>
+                <span id="marketStatus" class="small-note">Loading</span>
+              </div>
+              <div id="marketDataGrid" class="market-grid"></div>
+            </article>
+
+            <article class="allocation-card">
+              <h2>History & Audit</h2>
+              <div id="historyList" class="history-list"></div>
+            </article>
+          </section>
         </section>
       </section>
     </main>
 
+    <script src="src/allocation-engine.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -1,0 +1,14 @@
+{
+  "name": "dynamic-bond-allocation-management",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Dynamic bond allocation assistant with market data hooks, portfolio history, audit logs, and tested allocation rules.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

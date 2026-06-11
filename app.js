@@ -1,25 +1,20 @@
-const assets = [
-  { key: "cash", label: "Cash / T-Bills", color: "var(--cash)", duration: 0.2, credit: 0 },
-  { key: "short", label: "Short Duration", color: "var(--short)", duration: 1.8, credit: 10 },
-  { key: "core", label: "Core Bonds", color: "var(--core)", duration: 5.6, credit: 25 },
-  { key: "long", label: "Long Treasuries", color: "var(--long)", duration: 15.5, credit: 0 },
-  { key: "tips", label: "Inflation Linked", color: "var(--tips)", duration: 6.7, credit: 5 },
-  { key: "credit", label: "Investment Grade Credit", color: "var(--credit)", duration: 6.8, credit: 55 },
-  { key: "yield", label: "High Yield", color: "var(--yield)", duration: 3.7, credit: 95 },
-];
+const engine = window.AllocationEngine;
 
-const defaults = {
-  cash: 8,
-  short: 18,
-  core: 34,
-  long: 10,
-  tips: 10,
-  credit: 16,
-  yield: 4,
+const assetColors = {
+  cash: "var(--cash)",
+  short: "var(--short)",
+  core: "var(--core)",
+  long: "var(--long)",
+  tips: "var(--tips)",
+  credit: "var(--credit)",
+  yield: "var(--yield)",
 };
 
 const state = {
-  current: { ...defaults },
+  current: { ...engine.DEFAULT_WEIGHTS },
+  marketData: null,
+  latestResult: null,
+  backendAvailable: true,
 };
 
 const controls = {
@@ -33,102 +28,6 @@ const controls = {
   recession: document.querySelector("#recession"),
 };
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function normalize(weights) {
-  const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
-  if (!total) return { ...defaults };
-  return Object.fromEntries(Object.entries(weights).map(([key, value]) => [key, (value / total) * 100]));
-}
-
-function rebalanceToHundred(weights) {
-  const normalized = normalize(weights);
-  return Object.fromEntries(Object.entries(normalized).map(([key, value]) => [key, Number(value.toFixed(1))]));
-}
-
-function computeTarget() {
-  const risk = controls.riskTolerance.value;
-  const horizon = controls.horizon.value;
-  const target = {
-    cash: risk === "defensive" ? 12 : risk === "growth" ? 5 : 8,
-    short: 18,
-    core: 34,
-    long: horizon === "long" ? 13 : horizon === "short" ? 5 : 10,
-    tips: 10,
-    credit: risk === "growth" ? 19 : risk === "defensive" ? 12 : 16,
-    yield: risk === "growth" ? 7 : risk === "defensive" ? 2 : 4,
-  };
-
-  if (controls.yieldTrend.value === "rising") {
-    target.short += 8;
-    target.cash += 3;
-    target.long -= 7;
-    target.core -= 4;
-  }
-
-  if (controls.yieldTrend.value === "falling") {
-    target.long += 7;
-    target.core += 4;
-    target.short -= 6;
-    target.cash -= 2;
-  }
-
-  if (controls.creditSpreads.value === "wide") {
-    target.credit += 3;
-    target.yield += risk === "defensive" ? 0 : 2;
-    target.cash += 2;
-    target.core -= 4;
-    target.short -= 3;
-  }
-
-  if (controls.creditSpreads.value === "tight") {
-    target.credit -= 4;
-    target.yield -= 3;
-    target.core += 4;
-    target.cash += 3;
-  }
-
-  if (controls.inflation.value === "hot") {
-    target.tips += 7;
-    target.long -= 4;
-    target.core -= 3;
-  }
-
-  if (controls.inflation.value === "cooling") {
-    target.tips -= 4;
-    target.core += 2;
-    target.long += 2;
-  }
-
-  if (controls.recession.value === "high") {
-    target.cash += 5;
-    target.long += 4;
-    target.yield -= 5;
-    target.credit -= 3;
-    target.core -= 1;
-  }
-
-  if (controls.recession.value === "low" && risk !== "defensive") {
-    target.cash -= 2;
-    target.credit += 3;
-    target.yield += 2;
-    target.short -= 3;
-  }
-
-  target.yield = clamp(target.yield, 0, Number(controls.maxHighYield.value));
-  assets.forEach((asset) => {
-    target[asset.key] = clamp(target[asset.key], 0, 65);
-  });
-
-  return rebalanceToHundred(target);
-}
-
-function weightedMetric(weights, field) {
-  return assets.reduce((sum, asset) => sum + ((weights[asset.key] || 0) / 100) * asset[field], 0);
-}
-
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -137,10 +36,42 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+function formatPct(value) {
+  return Number.isFinite(Number(value)) ? `${Number(value).toFixed(2)}%` : "n/a";
+}
+
+async function api(path, options) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) throw new Error(`API ${path} failed with ${response.status}`);
+  return response.json();
+}
+
+function getInput() {
+  return {
+    mandate: {
+      portfolioSize: Number(controls.portfolioSize.value || 0),
+      horizon: controls.horizon.value,
+      riskTolerance: controls.riskTolerance.value,
+      maxHighYield: Number(controls.maxHighYield.value || 0),
+    },
+    signals: {
+      yieldTrend: controls.yieldTrend.value,
+      creditSpreads: controls.creditSpreads.value,
+      inflation: controls.inflation.value,
+      recession: controls.recession.value,
+    },
+    current: state.current,
+    marketData: state.marketData,
+  };
+}
+
 function renderCurrentInputs() {
   const container = document.querySelector("#currentInputs");
   container.innerHTML = "";
-  assets.forEach((asset) => {
+  engine.ASSETS.forEach((asset) => {
     const row = document.createElement("label");
     row.className = "current-row";
     row.innerHTML = `
@@ -158,28 +89,20 @@ function renderCurrentInputs() {
 function renderAllocationBars(target) {
   const container = document.querySelector("#allocationBars");
   container.innerHTML = "";
-  assets.forEach((asset) => {
+  engine.ASSETS.forEach((asset) => {
     const row = document.createElement("div");
     row.className = "bar-row";
     row.innerHTML = `
       <span class="bar-label">${asset.label}</span>
-      <span class="bar-track"><span class="bar-fill" style="width: ${target[asset.key]}%; background: ${asset.color}"></span></span>
+      <span class="bar-track"><span class="bar-fill" style="width: ${target[asset.key]}%; background: ${assetColors[asset.key]}"></span></span>
       <span class="bar-value">${target[asset.key].toFixed(1)}%</span>
     `;
     container.appendChild(row);
   });
 }
 
-function renderRebalance(target) {
-  const portfolioSize = Number(controls.portfolioSize.value || 0);
-  const current = normalize(state.current);
-  const rows = assets.map((asset) => {
-    const diff = target[asset.key] - current[asset.key];
-    return { asset, diff, dollars: (diff / 100) * portfolioSize };
-  });
-  const turnover = rows.reduce((sum, row) => sum + Math.abs(row.dollars), 0) / 2;
-
-  document.querySelector("#turnoverMetric").textContent = formatCurrency(turnover);
+function renderRebalance(result) {
+  document.querySelector("#turnoverMetric").textContent = formatCurrency(result.rebalance.turnover);
 
   const table = document.querySelector("#rebalanceTable");
   table.innerHTML = `
@@ -188,29 +111,29 @@ function renderRebalance(target) {
     </div>
   `;
 
-  rows
+  result.rebalance.trades
+    .slice()
     .sort((a, b) => Math.abs(b.dollars) - Math.abs(a.dollars))
-    .forEach((row) => {
-      const action = Math.abs(row.dollars) < portfolioSize * 0.0025 ? "Hold" : row.dollars > 0 ? "Buy" : "Sell";
-      const className = action === "Buy" ? "trade-buy" : action === "Sell" ? "trade-sell" : "";
+    .forEach((trade) => {
+      const className = trade.action === "Buy" ? "trade-buy" : trade.action === "Sell" ? "trade-sell" : "";
       const element = document.createElement("div");
       element.className = "table-row";
       element.innerHTML = `
-        <span>${row.asset.label}</span>
-        <span class="${className}">${action}</span>
-        <span>${formatCurrency(Math.abs(row.dollars))}</span>
+        <span>${trade.label}</span>
+        <span class="${className}">${trade.action}</span>
+        <span>${formatCurrency(Math.abs(trade.dollars))}</span>
       `;
       table.appendChild(element);
     });
 }
 
-function renderBrief(target) {
-  const duration = weightedMetric(target, "duration");
-  const credit = weightedMetric(target, "credit");
-  const cash = target.cash;
+function renderBrief(result) {
+  const duration = result.metrics.duration;
+  const credit = result.metrics.creditRisk;
+  const cash = result.metrics.cashBuffer;
 
   document.querySelector("#durationMetric").textContent = `${duration.toFixed(1)} yrs`;
-  document.querySelector("#creditMetric").textContent = Math.round(credit);
+  document.querySelector("#creditMetric").textContent = credit;
   document.querySelector("#cashMetric").textContent = `${cash.toFixed(1)}%`;
 
   const durationPosture = duration > 6.5 ? "Long duration" : duration < 4 ? "Short duration" : "Neutral duration";
@@ -221,38 +144,119 @@ function renderBrief(target) {
   document.querySelector("#durationBadge").textContent = durationPosture;
   document.querySelector("#creditBadge").textContent = creditPosture;
 
-  const brief = `The model favors ${durationPosture.toLowerCase()} and ${creditPosture.toLowerCase()} positioning. It adjusts duration around the yield trend, keeps liquidity near ${cash.toFixed(1)}%, and respects the high-yield cap of ${controls.maxHighYield.value}%. Treat this as an allocation proposal to review against taxes, mandates, holdings quality, and transaction costs.`;
-  document.querySelector("#assistantBrief").textContent = brief;
-
-  const risks = [];
-  if (controls.yieldTrend.value === "rising") risks.push("Rising yields can pressure longer-duration holdings.");
-  if (controls.creditSpreads.value === "tight") risks.push("Tight credit spreads reduce compensation for downgrade and default risk.");
-  if (controls.creditSpreads.value === "wide") risks.push("Wide spreads may offer entry points, but liquidity and default risk can rise together.");
-  if (controls.inflation.value === "hot") risks.push("Hot inflation increases the value of inflation protection but can keep policy rates restrictive.");
-  if (controls.recession.value === "high") risks.push("High recession risk argues for liquidity, quality, and stress-tested cash flows.");
-  if (!risks.length) risks.push("Base-case signals are balanced; monitor yield volatility, inflation surprises, and spread changes.");
+  const policyText = result.policyAdjustments.length ? ` Policy constraints applied: ${result.policyAdjustments.join(" ")}` : "";
+  document.querySelector("#assistantBrief").textContent = `The allocation engine favors ${durationPosture.toLowerCase()} and ${creditPosture.toLowerCase()} positioning. It combines mandate inputs, market signals, and policy bands, then calculates rebalance trades from the current portfolio.${policyText} Treat this as decision support to review against taxes, mandates, holdings quality, and transaction costs.`;
 
   const list = document.querySelector("#riskList");
   list.innerHTML = "";
-  risks.forEach((risk) => {
+  [...result.rationale, ...result.policyAdjustments].forEach((risk) => {
     const item = document.createElement("li");
     item.textContent = risk;
     list.appendChild(item);
   });
 }
 
+function renderMarketData() {
+  const status = document.querySelector("#marketStatus");
+  const grid = document.querySelector("#marketDataGrid");
+  const marketData = state.marketData;
+  if (!marketData) {
+    status.textContent = "Unavailable";
+    grid.innerHTML = `<div class="market-item"><span>Status</span><strong>Static mode</strong></div>`;
+    return;
+  }
+
+  status.textContent = `${marketData.provider} / ${marketData.authStatus}`;
+  const items = [
+    ["As of", marketData.asOf || "n/a"],
+    ["2Y Treasury", formatPct(marketData.yields && marketData.yields.us2y)],
+    ["10Y Treasury", formatPct(marketData.yields && marketData.yields.us10y)],
+    ["30Y Treasury", formatPct(marketData.yields && marketData.yields.us30y)],
+    ["HY Spread", formatPct(marketData.spreads && marketData.spreads.highYield)],
+    ["10Y Breakeven", formatPct(marketData.inflationExpectations && marketData.inflationExpectations.us10yBreakeven)],
+    ["SHY", marketData.etfs && marketData.etfs.SHY ? formatCurrency(marketData.etfs.SHY.price) : "n/a"],
+    ["TLT", marketData.etfs && marketData.etfs.TLT ? formatCurrency(marketData.etfs.TLT.price) : "n/a"],
+  ];
+
+  grid.innerHTML = items
+    .map(([label, value]) => `<div class="market-item"><span>${label}</span><strong>${value}</strong></div>`)
+    .join("");
+}
+
+async function renderHistory() {
+  const container = document.querySelector("#historyList");
+  if (!state.backendAvailable) {
+    container.innerHTML = `<div class="history-item"><span>Backend</span><strong>Not running</strong><p>Start the server to save scenarios and audit history.</p></div>`;
+    return;
+  }
+
+  try {
+    const [scenarios, audit] = await Promise.all([api("/api/scenarios"), api("/api/audit")]);
+    const scenarioItems = scenarios.slice(0, 3).map((scenario) => ({
+      label: "Scenario",
+      title: scenario.name || "Saved allocation",
+      detail: new Date(scenario.createdAt).toLocaleString(),
+    }));
+    const auditItems = audit.slice(0, 3).map((entry) => ({
+      label: "Audit",
+      title: entry.action,
+      detail: new Date(entry.timestamp).toLocaleString(),
+    }));
+    const items = [...scenarioItems, ...auditItems];
+    container.innerHTML = items.length
+      ? items
+          .map((item) => `<div class="history-item"><span>${item.label}</span><strong>${item.title}</strong><p>${item.detail}</p></div>`)
+          .join("")
+      : `<div class="history-item"><span>History</span><strong>No saved scenarios yet</strong><p>Save a scenario to create an audit entry.</p></div>`;
+  } catch (error) {
+    state.backendAvailable = false;
+    renderHistory();
+  }
+}
+
 function render() {
   document.querySelector("#maxHighYieldValue").textContent = `${controls.maxHighYield.value}%`;
-  const target = computeTarget();
-  renderAllocationBars(target);
-  renderRebalance(target);
-  renderBrief(target);
+  const result = engine.allocate(getInput());
+  state.latestResult = result;
+  renderAllocationBars(result.target);
+  renderRebalance(result);
+  renderBrief(result);
+  renderMarketData();
+}
+
+async function refreshFromBackend() {
+  try {
+    state.marketData = await api("/api/market-data");
+    state.backendAvailable = true;
+  } catch (error) {
+    state.backendAvailable = false;
+  }
+  render();
+  await renderHistory();
+}
+
+async function saveScenario() {
+  if (!state.latestResult) return;
+  const payload = {
+    name: `Scenario ${new Date().toLocaleString()}`,
+    input: getInput(),
+    result: state.latestResult,
+  };
+  if (!state.backendAvailable) {
+    alert("Start the backend server to save scenarios.");
+    return;
+  }
+  await api("/api/scenarios", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  await renderHistory();
 }
 
 Object.values(controls).forEach((control) => control.addEventListener("input", render));
 
 document.querySelector("#resetButton").addEventListener("click", () => {
-  state.current = { ...defaults };
+  state.current = { ...engine.DEFAULT_WEIGHTS };
   controls.portfolioSize.value = 1000000;
   controls.horizon.value = "medium";
   controls.riskTolerance.value = "balanced";
@@ -265,5 +269,8 @@ document.querySelector("#resetButton").addEventListener("click", () => {
   render();
 });
 
+document.querySelector("#saveScenarioButton").addEventListener("click", saveScenario);
+
 renderCurrentInputs();
 render();
+refreshFromBackend();
