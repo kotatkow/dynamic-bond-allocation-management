@@ -25,25 +25,6 @@ python -m streamlit run streamlit_app.py
 - Shows recommended allocation, duration posture, credit-risk posture, and cash/T-bill weight.
 - Explains the recommendation using current yield-curve conditions, credit spreads, inflation expectations, and recession-risk data.
 - Loads market data through authenticated FRED and Alpha Vantage hooks when API keys are configured.
-- Provides a session-only conversational LLM chat for concise analyst-style narrative synthesis of the current dataset.
-
-## Interactive AI Commentary
-
-The dashboard includes an AI Market Chat below the Macro Rationale section. It can summarize the current data snapshot with the `Summarize dataset` button and answer follow-up questions about the dataset, allocation logic, yield curve, spreads, inflation expectations, and recession risk.
-
-The chat uses a conversational LLM for narrative synthesis only. It is not a source of personalized financial advice. Conversation history is stored in Streamlit session state and resets when the app restarts.
-
-The integration calls the OpenAI Responses API directly with supported request fields such as `model`, `input`, and `metadata`; it does not use the OpenAI SDK and does not set temperature control.
-
-After changing LLM settings or upgrading this app, restart Streamlit or use `Clear chat` to remove stale session messages from earlier runs.
-
-Configure the LLM through Streamlit secrets or environment variables:
-
-```powershell
-$env:OPENAI_API_KEY="your-openai-key"
-$env:OPENAI_MODEL="gpt-5.6"
-streamlit run streamlit_app.py
-```
 
 ## Market Data
 
