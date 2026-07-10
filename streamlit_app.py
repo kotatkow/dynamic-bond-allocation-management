@@ -438,8 +438,8 @@ def call_llm(api_key: str, model: str, snapshot: dict, messages: list[dict[str, 
         instructions=LLM_INSTRUCTIONS,
         input=input_messages,
         max_output_tokens=650,
-        temperature=0.3,
         truncation="auto",
+        metadata={"feature": "bond-allocation-market-chat"},
     )
     return response.output_text.strip()
 

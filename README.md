@@ -33,6 +33,8 @@ The dashboard includes an AI Market Chat below the Macro Rationale section. It c
 
 The chat uses a conversational LLM for narrative synthesis only. It is not a source of personalized financial advice. Conversation history is stored in Streamlit session state and resets when the app restarts.
 
+The integration uses the OpenAI Responses API with supported request fields such as `model`, `input`, and `metadata`; it does not set temperature control.
+
 Configure the LLM through Streamlit secrets or environment variables:
 
 ```powershell
