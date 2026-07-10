@@ -373,13 +373,87 @@ def describe_macro_rationale(result: dict, market_data: dict) -> list[tuple[str,
     ]
 
 
+LLM_INSTRUCTIONS = """
+You are an analyst inside a bond allocation dashboard. Use only the provided data snapshot and prior chat
+messages to explain the current bond market environment, yield curve dynamics, credit spreads, inflation
+expectations, recession risk, and allocation logic. Be concise, data-driven, and natural. Do not present the
+output as personalized financial advice, and do not invent unavailable data.
+""".strip()
+
+
+def build_llm_snapshot(mandate: dict, result: dict, market_data: dict) -> dict:
+    yields = market_data.get("yields") or {}
+    slope_10y_2y = None
+    if isinstance(yields.get("us10y"), (int, float)) and isinstance(yields.get("us2y"), (int, float)):
+        slope_10y_2y = round(yields["us10y"] - yields["us2y"], 3)
+
+    return {
+        "asOf": market_data.get("asOf"),
+        "provider": market_data.get("provider"),
+        "authStatus": market_data.get("authStatus"),
+        "mandate": mandate,
+        "recommendedAllocation": result["target"],
+        "portfolioMetrics": {
+            "estimatedDurationYears": round(result["duration"], 2),
+            "creditRiskScore": result["creditRisk"],
+            "cashOrTBillsWeight": result["cashBuffer"],
+        },
+        "signals": result["signals"],
+        "derivedMetrics": {"tenYearMinusTwoYearYieldSlope": slope_10y_2y},
+        "marketData": {
+            "treasuryYields": market_data.get("yields") or {},
+            "creditSpreads": market_data.get("spreads") or {},
+            "inflationExpectations": market_data.get("inflationExpectations") or {},
+            "recessionIndicators": market_data.get("recessionIndicators") or {},
+            "etfQuotes": market_data.get("etfs") or {},
+        },
+        "ruleBasedRationale": result["rationale"],
+        "policyNotes": result["policyNotes"],
+        "sources": market_data.get("sources") or [],
+        "dataErrors": market_data.get("errors") or [],
+    }
+
+
+def init_chat_state() -> None:
+    if "llm_messages" not in st.session_state:
+        st.session_state.llm_messages = []
+
+
+def call_llm(api_key: str, model: str, snapshot: dict, messages: list[dict[str, str]]) -> str:
+    from openai import OpenAI
+
+    input_messages = [
+        {
+            "role": "user",
+            "content": (
+                "Current dashboard data snapshot. Treat this as the authoritative dataset for the answer:\n"
+                f"{json.dumps(snapshot, indent=2, sort_keys=True)}"
+            ),
+        },
+        *messages[-10:],
+    ]
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        instructions=LLM_INSTRUCTIONS,
+        input=input_messages,
+        max_output_tokens=650,
+        temperature=0.3,
+        truncation="auto",
+    )
+    return response.output_text.strip()
+
+
 st.set_page_config(page_title="Dynamic Bond Allocation Assistant", layout="wide")
+init_chat_state()
 
 st.title("Dynamic Bond Allocation Assistant")
 st.caption("General fixed-income allocation decision support. This is not personalized financial advice.")
 
 fred_key = get_secret("FRED_API_KEY")
 alpha_key = get_secret("ALPHA_VANTAGE_API_KEY")
+openai_key = get_secret("OPENAI_API_KEY")
+openai_model = get_secret("OPENAI_MODEL") or "gpt-5.6"
 market_data = fetch_market_data(fred_key, alpha_key)
 
 with st.sidebar:
@@ -469,6 +543,54 @@ with right:
 st.subheader("Macro Rationale")
 for title, explanation in describe_macro_rationale(result, market_data):
     st.markdown(f"**{title}.** {explanation}")
+
+st.subheader("AI Market Chat")
+st.caption("Session-only conversation over the current dashboard dataset. This is narrative synthesis, not financial advice.")
+llm_snapshot = build_llm_snapshot(mandate, result, market_data)
+
+if not openai_key:
+    st.info("Set `OPENAI_API_KEY` in Streamlit secrets or the environment to enable the chat assistant.")
+
+summarize_clicked = st.button("Summarize dataset", disabled=not openai_key)
+if summarize_clicked:
+    summary_prompt = (
+        "Summarize the full current data snapshot in analyst commentary. Cover the bond market environment, "
+        "yield curve dynamics, credit spreads, inflation expectations, recession risk, and how these inputs affect "
+        "the recommended allocation."
+    )
+    st.session_state.llm_messages.append({"role": "user", "content": summary_prompt})
+    try:
+        with st.spinner("Generating market commentary..."):
+            answer = call_llm(openai_key, openai_model, llm_snapshot, st.session_state.llm_messages)
+        st.session_state.llm_messages.append({"role": "assistant", "content": answer})
+    except Exception as error:
+        st.session_state.llm_messages.append(
+            {"role": "assistant", "content": f"LLM request failed: {error}"}
+        )
+
+for message in st.session_state.llm_messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+chat_prompt = st.chat_input(
+    "Ask about the dataset, allocation logic, or macro trends",
+    disabled=not openai_key,
+)
+if chat_prompt:
+    st.session_state.llm_messages.append({"role": "user", "content": chat_prompt})
+    with st.chat_message("user"):
+        st.markdown(chat_prompt)
+    try:
+        with st.spinner("Analyzing current data snapshot..."):
+            answer = call_llm(openai_key, openai_model, llm_snapshot, st.session_state.llm_messages)
+        st.session_state.llm_messages.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+    except Exception as error:
+        error_text = f"LLM request failed: {error}"
+        st.session_state.llm_messages.append({"role": "assistant", "content": error_text})
+        with st.chat_message("assistant"):
+            st.error(error_text)
 
 st.subheader("Advisor Brief")
 duration_posture = "long duration" if result["duration"] > 6.5 else "short duration" if result["duration"] < 4 else "neutral duration"
