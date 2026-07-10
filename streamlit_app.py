@@ -20,16 +20,6 @@ ASSETS = [
     {"key": "yield", "label": "High Yield", "duration": 3.7, "credit": 95},
 ]
 
-DEFAULT_WEIGHTS = {
-    "cash": 8.0,
-    "short": 18.0,
-    "core": 34.0,
-    "long": 10.0,
-    "tips": 10.0,
-    "credit": 16.0,
-    "yield": 4.0,
-}
-
 DEFAULT_POLICY = {
     "cash": {"min": 2.0, "max": 30.0},
     "short": {"min": 5.0, "max": 45.0},
@@ -47,12 +37,15 @@ DEMO_MARKET_DATA = {
     "yields": {"us3m": 3.82, "us2y": 4.13, "us5y": 4.26, "us10y": 4.53, "us30y": 5.01},
     "spreads": {"investmentGrade": 1.05, "highYield": 3.75},
     "inflationExpectations": {"us5yBreakeven": 2.38, "us10yBreakeven": 2.31},
+    "recessionIndicators": {"smoothedProbability": 4.1, "unemploymentRate": 4.2},
     "etfs": {
         "SGOV": {"price": 100.42, "changePct": 0.01},
         "SHY": {"price": 82.18, "changePct": -0.04},
         "IEF": {"price": 92.35, "changePct": -0.18},
         "TLT": {"price": 87.62, "changePct": -0.42},
     },
+    "sources": ["Demo snapshot used until FRED_API_KEY and ALPHA_VANTAGE_API_KEY are configured."],
+    "errors": [],
 }
 
 
@@ -109,44 +102,49 @@ def fetch_market_data(fred_key: str | None, alpha_key: str | None) -> dict:
         "yields": {},
         "spreads": {},
         "inflationExpectations": {},
+        "recessionIndicators": {},
         "etfs": {},
+        "sources": [],
+        "errors": [],
         "retrievedAt": datetime.now(timezone.utc).isoformat(),
     }
 
     if fred_key:
         fred_series = {
-            "us3m": "DGS3MO",
-            "us2y": "DGS2",
-            "us5y": "DGS5",
-            "us10y": "DGS10",
-            "us30y": "DGS30",
-            "highYield": "BAMLH0A0HYM2",
-            "investmentGrade": "BAMLC0A0CM",
-            "us5yBreakeven": "T5YIE",
-            "us10yBreakeven": "T10YIE",
+            "us3m": ("DGS3MO", "yields"),
+            "us2y": ("DGS2", "yields"),
+            "us5y": ("DGS5", "yields"),
+            "us10y": ("DGS10", "yields"),
+            "us30y": ("DGS30", "yields"),
+            "highYield": ("BAMLH0A0HYM2", "spreads"),
+            "investmentGrade": ("BAMLC0A0CM", "spreads"),
+            "us5yBreakeven": ("T5YIE", "inflationExpectations"),
+            "us10yBreakeven": ("T10YIE", "inflationExpectations"),
+            "smoothedProbability": ("RECPROUSM156N", "recessionIndicators"),
+            "unemploymentRate": ("UNRATE", "recessionIndicators"),
         }
-        for key, series_id in fred_series.items():
-            value, date = fetch_fred_latest(series_id, fred_key)
-            if key in ("highYield", "investmentGrade"):
-                data["spreads"][key] = value
-            elif key in ("us5yBreakeven", "us10yBreakeven"):
-                data["inflationExpectations"][key] = value
-            else:
-                data["yields"][key] = value
-            data["asOf"] = data["asOf"] or date
+        for key, (series_id, bucket) in fred_series.items():
+            try:
+                value, date = fetch_fred_latest(series_id, fred_key)
+                data[bucket][key] = value
+                data["asOf"] = data["asOf"] or date
+            except Exception as error:
+                data["errors"].append(f"FRED {series_id}: {error}")
+        data["sources"].append(
+            "FRED API: Treasury yields, credit spreads, breakeven inflation, recession probability, and unemployment."
+        )
 
     if alpha_key:
         for symbol in ("SGOV", "SHY", "IEF", "TLT"):
-            data["etfs"][symbol] = fetch_alpha_vantage_quote(symbol, alpha_key)
+            try:
+                data["etfs"][symbol] = fetch_alpha_vantage_quote(symbol, alpha_key)
+            except Exception as error:
+                data["errors"].append(f"Alpha Vantage {symbol}: {error}")
+        data["sources"].append("Alpha Vantage API: ETF quote snapshots for SGOV, SHY, IEF, and TLT.")
 
+    if not data["asOf"]:
+        data["asOf"] = "n/a"
     return data
-
-
-def normalize(weights: dict[str, float]) -> dict[str, float]:
-    total = sum(float(value or 0) for value in weights.values())
-    if not total:
-        return DEFAULT_WEIGHTS.copy()
-    return {key: float(value or 0) / total * 100 for key, value in weights.items()}
 
 
 def weighted_metric(weights: dict[str, float], field: str) -> float:
@@ -154,10 +152,11 @@ def weighted_metric(weights: dict[str, float], field: str) -> float:
 
 
 def infer_market_signals(market_data: dict) -> dict:
-    signals = {}
+    signals = {"yieldTrend": "stable", "creditSpreads": "normal", "inflation": "normal", "recession": "medium"}
     yields = market_data.get("yields") or {}
     spreads = market_data.get("spreads") or {}
     inflation = market_data.get("inflationExpectations") or {}
+    recession = market_data.get("recessionIndicators") or {}
 
     if isinstance(yields.get("us10y"), (int, float)) and isinstance(yields.get("us2y"), (int, float)):
         slope = yields["us10y"] - yields["us2y"]
@@ -170,6 +169,10 @@ def infer_market_signals(market_data: dict) -> dict:
     if isinstance(inflation.get("us10yBreakeven"), (int, float)):
         breakeven = inflation["us10yBreakeven"]
         signals["inflation"] = "hot" if breakeven > 2.6 else "cooling" if breakeven < 2 else "normal"
+
+    probability = recession.get("smoothedProbability")
+    if isinstance(probability, (int, float)):
+        signals["recession"] = "high" if probability > 25 else "medium" if probability > 10 else "low"
 
     return signals
 
@@ -187,57 +190,57 @@ def base_weights(risk_tolerance: str, horizon: str) -> dict[str, float]:
 
 
 def apply_tilts(target: dict[str, float], risk_tolerance: str, signals: dict, rationale: list[str]) -> None:
-    if signals["yieldTrend"] == "rising":
+    if signals.get("yieldTrend") == "rising":
         target["short"] += 8
         target["cash"] += 3
         target["long"] -= 7
         target["core"] -= 4
-        rationale.append("Rising-yield signal reduced long-duration exposure and increased short-duration liquidity.")
-    elif signals["yieldTrend"] == "falling":
+        rationale.append("A steep or rising yield-curve signal favors shorter duration and extra liquidity.")
+    elif signals.get("yieldTrend") == "falling":
         target["long"] += 7
         target["core"] += 4
         target["short"] -= 6
         target["cash"] -= 2
-        rationale.append("Falling-yield signal increased duration through long Treasuries and core bonds.")
+        rationale.append("An inverted or falling yield-curve signal adds high-quality duration.")
 
-    if signals["creditSpreads"] == "wide":
+    if signals.get("creditSpreads") == "wide":
         target["credit"] += 3
         target["yield"] += 0 if risk_tolerance == "defensive" else 2
         target["cash"] += 2
         target["core"] -= 4
         target["short"] -= 3
-        rationale.append("Wide credit-spread signal added selective credit exposure while preserving extra cash.")
-    elif signals["creditSpreads"] == "tight":
+        rationale.append("Wide credit spreads allow selective credit exposure while preserving a cash buffer.")
+    elif signals.get("creditSpreads") == "tight":
         target["credit"] -= 4
         target["yield"] -= 3
         target["core"] += 4
         target["cash"] += 3
-        rationale.append("Tight credit-spread signal reduced lower-quality credit because compensation is thinner.")
+        rationale.append("Tight credit spreads reduce compensation for lower-quality credit risk.")
 
-    if signals["inflation"] == "hot":
+    if signals.get("inflation") == "hot":
         target["tips"] += 7
         target["long"] -= 4
         target["core"] -= 3
-        rationale.append("Hot-inflation signal increased inflation-linked exposure and reduced nominal duration.")
-    elif signals["inflation"] == "cooling":
+        rationale.append("Elevated inflation expectations increase inflation-linked exposure and reduce nominal duration.")
+    elif signals.get("inflation") == "cooling":
         target["tips"] -= 4
         target["core"] += 2
         target["long"] += 2
-        rationale.append("Cooling-inflation signal shifted some TIPS weight into nominal core and long bonds.")
+        rationale.append("Cooling inflation expectations shift some allocation back into nominal bonds.")
 
-    if signals["recession"] == "high":
+    if signals.get("recession") == "high":
         target["cash"] += 5
         target["long"] += 4
         target["yield"] -= 5
         target["credit"] -= 3
         target["core"] -= 1
-        rationale.append("High-recession signal increased liquidity and high-quality duration while reducing credit beta.")
-    elif signals["recession"] == "low" and risk_tolerance != "defensive":
+        rationale.append("High recession risk increases liquidity and high-quality duration while reducing credit beta.")
+    elif signals.get("recession") == "low" and risk_tolerance != "defensive":
         target["cash"] -= 2
         target["credit"] += 3
         target["yield"] += 2
         target["short"] -= 3
-        rationale.append("Low-recession signal allowed more credit exposure for income.")
+        rationale.append("Low recession risk supports more income exposure through credit.")
 
 
 def enforce_policy(weights: dict[str, float], max_high_yield: float) -> tuple[dict[str, float], list[str]]:
@@ -294,39 +297,15 @@ def enforce_policy(weights: dict[str, float], max_high_yield: float) -> tuple[di
     return rounded, policy_notes
 
 
-def calculate_rebalance(current: dict[str, float], target: dict[str, float], portfolio_size: float) -> tuple[list[dict], float]:
-    current_normalized = normalize(current)
-    trades = []
-    for asset in ASSETS:
-        key = asset["key"]
-        diff = target[key] - current_normalized.get(key, 0)
-        dollars = diff / 100 * portfolio_size
-        action = "Hold" if abs(diff) < 0.25 else "Buy" if diff > 0 else "Sell"
-        trades.append(
-            {
-                "Segment": asset["label"],
-                "Action": action,
-                "Current %": round(current_normalized.get(key, 0), 1),
-                "Target %": round(target[key], 1),
-                "Trade $": dollars,
-            }
-        )
-    turnover = sum(abs(trade["Trade $"]) for trade in trades) / 2
-    return trades, turnover
-
-
-def allocate(mandate: dict, user_signals: dict, current: dict[str, float], market_data: dict) -> dict:
+def allocate(mandate: dict, user_signals: dict, market_data: dict) -> dict:
     market_signals = infer_market_signals(market_data)
     signals = {**market_signals, **user_signals}
     rationale = [f"Base allocation selected for {mandate['riskTolerance']} risk and {mandate['horizon']} horizon."]
     target = base_weights(mandate["riskTolerance"], mandate["horizon"])
     apply_tilts(target, mandate["riskTolerance"], signals, rationale)
     target, policy_notes = enforce_policy(target, mandate["maxHighYield"])
-    trades, turnover = calculate_rebalance(current, target, mandate["portfolioSize"])
     return {
         "target": target,
-        "trades": trades,
-        "turnover": turnover,
         "duration": weighted_metric(target, "duration"),
         "creditRisk": round(weighted_metric(target, "credit")),
         "cashBuffer": target["cash"],
@@ -336,26 +315,68 @@ def allocate(mandate: dict, user_signals: dict, current: dict[str, float], marke
     }
 
 
-def init_session() -> None:
-    if "current" not in st.session_state:
-        st.session_state.current = DEFAULT_WEIGHTS.copy()
-    if "scenarios" not in st.session_state:
-        st.session_state.scenarios = []
-
-
-def money(value: float) -> str:
-    return f"${value:,.0f}"
-
-
 def percent_or_na(value: float | None) -> str:
     return "n/a" if value is None or (isinstance(value, float) and math.isnan(value)) else f"{value:.2f}%"
 
 
+def signed_percent_or_na(value: float | None) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "n/a"
+    return f"{value:+.2f}%"
+
+
+def describe_macro_rationale(result: dict, market_data: dict) -> list[tuple[str, str]]:
+    yields = market_data.get("yields") or {}
+    spreads = market_data.get("spreads") or {}
+    inflation = market_data.get("inflationExpectations") or {}
+    recession = market_data.get("recessionIndicators") or {}
+    signals = result["signals"]
+    slope = None
+    if isinstance(yields.get("us10y"), (int, float)) and isinstance(yields.get("us2y"), (int, float)):
+        slope = yields["us10y"] - yields["us2y"]
+
+    return [
+        (
+            "Yield curve",
+            (
+                f"2Y Treasury is {percent_or_na(yields.get('us2y'))}, 10Y is {percent_or_na(yields.get('us10y'))}, "
+                f"and the 10Y-2Y slope is {signed_percent_or_na(slope)}. "
+                f"The model reads this as a {signals['yieldTrend']} duration signal, which "
+                f"{'keeps more weight in short bonds and cash' if signals['yieldTrend'] == 'rising' else 'adds long and core duration' if signals['yieldTrend'] == 'falling' else 'keeps duration near the mandate baseline'}."
+            ),
+        ),
+        (
+            "Credit spreads",
+            (
+                f"High-yield spreads are {percent_or_na(spreads.get('highYield'))} and investment-grade spreads are "
+                f"{percent_or_na(spreads.get('investmentGrade'))}. The model classifies spreads as "
+                f"{signals['creditSpreads']}, so it "
+                f"{'limits lower-quality credit because spread compensation is thin' if signals['creditSpreads'] == 'tight' else 'allows selective credit exposure while keeping liquidity' if signals['creditSpreads'] == 'wide' else 'keeps credit exposure close to the base allocation'}."
+            ),
+        ),
+        (
+            "Inflation expectations",
+            (
+                f"5Y breakeven inflation is {percent_or_na(inflation.get('us5yBreakeven'))} and 10Y breakeven inflation is "
+                f"{percent_or_na(inflation.get('us10yBreakeven'))}. The inflation signal is {signals['inflation']}, "
+                f"which {'raises TIPS exposure and trims nominal duration' if signals['inflation'] == 'hot' else 'reduces the TIPS tilt and supports nominal bonds' if signals['inflation'] == 'cooling' else 'keeps TIPS near the strategic weight'}."
+            ),
+        ),
+        (
+            "Recession risk",
+            (
+                f"FRED recession probability is {percent_or_na(recession.get('smoothedProbability'))} and unemployment is "
+                f"{percent_or_na(recession.get('unemploymentRate'))}. The recession setting is {signals['recession']}, "
+                f"so the recommendation {'adds liquidity and long Treasuries while cutting credit beta' if signals['recession'] == 'high' else 'allows more income-oriented credit exposure' if signals['recession'] == 'low' else 'keeps a balanced mix of carry, duration, and credit risk'}."
+            ),
+        ),
+    ]
+
+
 st.set_page_config(page_title="Dynamic Bond Allocation Assistant", layout="wide")
-init_session()
 
 st.title("Dynamic Bond Allocation Assistant")
-st.caption("Fixed-income decision support. This is not personalized financial advice.")
+st.caption("General fixed-income allocation decision support. This is not personalized financial advice.")
 
 fred_key = get_secret("FRED_API_KEY")
 alpha_key = get_secret("ALPHA_VANTAGE_API_KEY")
@@ -363,30 +384,48 @@ market_data = fetch_market_data(fred_key, alpha_key)
 
 with st.sidebar:
     st.header("Mandate")
-    portfolio_size = st.number_input("Portfolio size", min_value=1000, step=1000, value=1_000_000)
-    horizon = st.selectbox("Investment horizon", ["short", "medium", "long"], index=1, format_func=lambda value: {"short": "0-2 years", "medium": "3-7 years", "long": "8+ years"}[value])
-    risk_tolerance = st.selectbox("Risk tolerance", ["defensive", "balanced", "growth"], index=1, format_func=lambda value: {"defensive": "Defensive", "balanced": "Balanced", "growth": "Income seeking"}[value])
-    max_high_yield = st.slider("Max high yield", min_value=0, max_value=20, value=8)
+    horizon = st.selectbox(
+        "Investment horizon",
+        ["short", "medium", "long"],
+        index=1,
+        format_func=lambda value: {"short": "0-2 years", "medium": "3-7 years", "long": "8+ years"}[value],
+    )
+    risk_tolerance = st.selectbox(
+        "Risk tolerance",
+        ["defensive", "balanced", "growth"],
+        index=1,
+        format_func=lambda value: {"defensive": "Defensive", "balanced": "Balanced", "growth": "Income seeking"}[value],
+    )
+    max_high_yield = st.slider("Max high yield allocation", min_value=0, max_value=20, value=8)
 
     st.header("Market Signals")
     inferred = infer_market_signals(market_data)
-    yield_trend = st.selectbox("Yield trend", ["falling", "stable", "rising"], index=["falling", "stable", "rising"].index(inferred.get("yieldTrend", "stable")))
-    credit_spreads = st.selectbox("Credit spreads", ["tight", "normal", "wide"], index=["tight", "normal", "wide"].index(inferred.get("creditSpreads", "normal")))
-    inflation = st.selectbox("Inflation pressure", ["cooling", "normal", "hot"], index=["cooling", "normal", "hot"].index(inferred.get("inflation", "normal")))
-    recession = st.selectbox("Recession risk", ["low", "medium", "high"], index=1)
-
-    st.header("Current Portfolio")
-    for asset in ASSETS:
-        st.session_state.current[asset["key"]] = st.number_input(
-            asset["label"],
-            min_value=0.0,
-            max_value=100.0,
-            value=float(st.session_state.current[asset["key"]]),
-            step=0.5,
-        )
+    yield_trend = st.selectbox(
+        "Yield trend",
+        ["falling", "stable", "rising"],
+        index=["falling", "stable", "rising"].index(inferred["yieldTrend"]),
+        help="Prefilled from the 10Y-2Y Treasury curve slope when FRED data is available.",
+    )
+    credit_spreads = st.selectbox(
+        "Credit spreads",
+        ["tight", "normal", "wide"],
+        index=["tight", "normal", "wide"].index(inferred["creditSpreads"]),
+        help="Prefilled from high-yield spread data when FRED data is available.",
+    )
+    inflation = st.selectbox(
+        "Inflation pressure",
+        ["cooling", "normal", "hot"],
+        index=["cooling", "normal", "hot"].index(inferred["inflation"]),
+        help="Prefilled from 10Y breakeven inflation when FRED data is available.",
+    )
+    recession = st.selectbox(
+        "Recession risk",
+        ["low", "medium", "high"],
+        index=["low", "medium", "high"].index(inferred["recession"]),
+        help="Prefilled from FRED recession probability when available; otherwise defaults to medium.",
+    )
 
 mandate = {
-    "portfolioSize": float(portfolio_size),
     "horizon": horizon,
     "riskTolerance": risk_tolerance,
     "maxHighYield": float(max_high_yield),
@@ -397,17 +436,17 @@ signals = {
     "inflation": inflation,
     "recession": recession,
 }
-result = allocate(mandate, signals, st.session_state.current, market_data)
+result = allocate(mandate, signals, market_data)
 
 metric_cols = st.columns(4)
 metric_cols[0].metric("Estimated duration", f"{result['duration']:.1f} yrs")
 metric_cols[1].metric("Credit risk score", result["creditRisk"])
-metric_cols[2].metric("Cash buffer", f"{result['cashBuffer']:.1f}%")
-metric_cols[3].metric("Turnover", money(result["turnover"]))
+metric_cols[2].metric("Cash / T-bills", f"{result['cashBuffer']:.1f}%")
+metric_cols[3].metric("High yield cap", f"{max_high_yield:.0f}%")
 
 left, right = st.columns([1.25, 1])
 with left:
-    st.subheader("Target Allocation")
+    st.subheader("Recommended Allocation")
     allocation_rows = [{"Segment": asset["label"], "Target %": result["target"][asset["key"]]} for asset in ASSETS]
     st.bar_chart({row["Segment"]: row["Target %"] for row in allocation_rows})
     st.dataframe(allocation_rows, use_container_width=True, hide_index=True)
@@ -416,51 +455,39 @@ with right:
     st.subheader("Market Data")
     st.caption(f"{market_data.get('provider')} / {market_data.get('authStatus')} / as of {market_data.get('asOf')}")
     market_cols = st.columns(2)
-    market_cols[0].metric("2Y Treasury", percent_or_na((market_data.get("yields") or {}).get("us2y")))
-    market_cols[1].metric("10Y Treasury", percent_or_na((market_data.get("yields") or {}).get("us10y")))
-    market_cols[0].metric("HY Spread", percent_or_na((market_data.get("spreads") or {}).get("highYield")))
-    market_cols[1].metric("10Y Breakeven", percent_or_na((market_data.get("inflationExpectations") or {}).get("us10yBreakeven")))
+    yields = market_data.get("yields") or {}
+    spreads = market_data.get("spreads") or {}
+    breakevens = market_data.get("inflationExpectations") or {}
+    recession_data = market_data.get("recessionIndicators") or {}
+    market_cols[0].metric("2Y Treasury", percent_or_na(yields.get("us2y")))
+    market_cols[1].metric("10Y Treasury", percent_or_na(yields.get("us10y")))
+    market_cols[0].metric("30Y Treasury", percent_or_na(yields.get("us30y")))
+    market_cols[1].metric("HY Spread", percent_or_na(spreads.get("highYield")))
+    market_cols[0].metric("10Y Breakeven", percent_or_na(breakevens.get("us10yBreakeven")))
+    market_cols[1].metric("Recession Probability", percent_or_na(recession_data.get("smoothedProbability")))
 
-st.subheader("Rebalance Orders")
-trade_rows = [
-    {
-        **trade,
-        "Trade $": money(abs(trade["Trade $"])),
-    }
-    for trade in sorted(result["trades"], key=lambda item: abs(item["Trade $"]), reverse=True)
-]
-st.dataframe(trade_rows, use_container_width=True, hide_index=True)
+st.subheader("Macro Rationale")
+for title, explanation in describe_macro_rationale(result, market_data):
+    st.markdown(f"**{title}.** {explanation}")
 
-st.subheader("Assistant Brief")
+st.subheader("Advisor Brief")
 duration_posture = "long duration" if result["duration"] > 6.5 else "short duration" if result["duration"] < 4 else "neutral duration"
 credit_posture = "higher credit beta" if result["creditRisk"] > 42 else "defensive credit" if result["creditRisk"] < 27 else "selective credit"
 st.write(
-    f"The allocation engine favors {duration_posture} and {credit_posture}. "
-    "It combines mandate inputs, market signals, and policy bands, then calculates rebalance trades from the current portfolio."
+    f"The recommendation favors **{duration_posture}** and **{credit_posture}** positioning. "
+    "It combines mandate inputs, current macro signals, and policy bands to produce a general target allocation."
 )
 for note in result["rationale"] + result["policyNotes"]:
     st.write(f"- {note}")
 
-if st.button("Save scenario"):
-    st.session_state.scenarios.insert(
-        0,
-        {
-            "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "mandate": mandate,
-            "signals": signals,
-            "target": result["target"],
-            "turnover": result["turnover"],
-        },
-    )
-    st.success("Scenario saved for this browser session.")
-
-with st.expander("Scenario history"):
-    if not st.session_state.scenarios:
-        st.write("No saved scenarios yet.")
-    else:
-        st.dataframe(st.session_state.scenarios, use_container_width=True)
-
-with st.expander("Publishing notes"):
+with st.expander("Data sources and publishing notes"):
+    if market_data.get("sources"):
+        for source in market_data["sources"]:
+            st.write(f"- {source}")
+    if market_data.get("errors"):
+        st.warning("Some market data could not be refreshed.")
+        for error in market_data["errors"]:
+            st.write(f"- {error}")
     st.write(
         "For Streamlit Community Cloud, set `streamlit_app.py` as the app file. "
         "Add `FRED_API_KEY` and `ALPHA_VANTAGE_API_KEY` in Streamlit secrets for authenticated data. "

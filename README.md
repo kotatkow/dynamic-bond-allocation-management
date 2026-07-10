@@ -1,8 +1,8 @@
-# Dynamic Bond Allocation Management Assistant
+# Dynamic Bond Allocation Assistant
 
-A Streamlit assistant for exploring fixed-income allocation decisions across short duration, intermediate bonds, long duration, inflation-linked bonds, credit, high yield, and cash.
+A Streamlit-only advisory dashboard for exploring general fixed-income allocation decisions across cash/T-bills, short duration, core bonds, long Treasuries, TIPS, investment-grade credit, and high yield.
 
-This is decision-support software, not investment advice. Outputs are model-driven estimates based on user-entered assumptions and should be reviewed by a qualified professional before use with real capital.
+This is decision-support software, not investment advice. Outputs are model-driven estimates based on mandate assumptions and macro data, and should be reviewed by a qualified professional before use with real capital.
 
 ## Run The App
 
@@ -19,11 +19,14 @@ python -m streamlit run streamlit_app.py
 
 ## What It Does
 
-- Captures investor constraints, current allocation, and macro signals.
-- Computes a risk-aware target allocation using policy constraints.
-- Shows rebalance trades, duration posture, credit posture, and key risks.
-- Provides an assistant panel that explains the recommendation in plain English.
-- Loads market data through authenticated provider hooks when API keys are configured.
+- Captures advisory inputs such as investment horizon, risk tolerance, and high-yield allocation cap.
+- Prefills macro signals from market data where available.
+- Computes a general target bond allocation using rule-based tilts and policy constraints.
+- Shows recommended allocation, duration posture, credit-risk posture, and cash/T-bill weight.
+- Explains the recommendation using current yield-curve conditions, credit spreads, inflation expectations, and recession-risk data.
+- Loads market data through authenticated FRED and Alpha Vantage hooks when API keys are configured.
+
+The app does not track a user's current portfolio, calculate trade orders, save scenarios, or maintain allocation history.
 
 ## Market Data
 
