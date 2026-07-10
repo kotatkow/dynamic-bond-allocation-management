@@ -35,6 +35,8 @@ The chat uses a conversational LLM for narrative synthesis only. It is not a sou
 
 The integration uses the OpenAI Responses API with supported request fields such as `model`, `input`, and `metadata`; it does not set temperature control.
 
+After changing LLM settings or upgrading this app, restart Streamlit or use `Clear chat` to remove stale session messages from earlier runs.
+
 Configure the LLM through Streamlit secrets or environment variables:
 
 ```powershell

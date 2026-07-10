@@ -379,6 +379,7 @@ messages to explain the current bond market environment, yield curve dynamics, c
 expectations, recession risk, and allocation logic. Be concise, data-driven, and natural. Do not present the
 output as personalized financial advice, and do not invent unavailable data.
 """.strip()
+CHAT_STATE_VERSION = "responses-api-v3"
 
 
 def build_llm_snapshot(mandate: dict, result: dict, market_data: dict) -> dict:
@@ -415,7 +416,10 @@ def build_llm_snapshot(mandate: dict, result: dict, market_data: dict) -> dict:
 
 
 def init_chat_state() -> None:
-    if "llm_messages" not in st.session_state:
+    if st.session_state.get("llm_state_version") != CHAT_STATE_VERSION:
+        st.session_state.llm_messages = []
+        st.session_state.llm_state_version = CHAT_STATE_VERSION
+    elif "llm_messages" not in st.session_state:
         st.session_state.llm_messages = []
 
 
@@ -551,7 +555,12 @@ llm_snapshot = build_llm_snapshot(mandate, result, market_data)
 if not openai_key:
     st.info("Set `OPENAI_API_KEY` in Streamlit secrets or the environment to enable the chat assistant.")
 
-summarize_clicked = st.button("Summarize dataset", disabled=not openai_key)
+chat_actions = st.columns([1, 1, 4])
+summarize_clicked = chat_actions[0].button("Summarize dataset", disabled=not openai_key)
+if chat_actions[1].button("Clear chat"):
+    st.session_state.llm_messages = []
+    st.rerun()
+
 if summarize_clicked:
     summary_prompt = (
         "Summarize the full current data snapshot in analyst commentary. Cover the bond market environment, "
