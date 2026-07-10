@@ -4,8 +4,9 @@ import json
 import math
 import os
 from datetime import datetime, timezone
+from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import streamlit as st
 
@@ -379,7 +380,7 @@ messages to explain the current bond market environment, yield curve dynamics, c
 expectations, recession risk, and allocation logic. Be concise, data-driven, and natural. Do not present the
 output as personalized financial advice, and do not invent unavailable data.
 """.strip()
-CHAT_STATE_VERSION = "responses-api-v3"
+CHAT_STATE_VERSION = "responses-api-direct-v4"
 
 
 def build_llm_snapshot(mandate: dict, result: dict, market_data: dict) -> dict:
@@ -423,9 +424,20 @@ def init_chat_state() -> None:
         st.session_state.llm_messages = []
 
 
-def call_llm(api_key: str, model: str, snapshot: dict, messages: list[dict[str, str]]) -> str:
-    from openai import OpenAI
+def extract_response_text(payload: dict) -> str:
+    parts = []
+    for item in payload.get("output") or []:
+        for content in item.get("content") or []:
+            if content.get("type") in {"output_text", "text"} and content.get("text"):
+                parts.append(content["text"])
+    if parts:
+        return "\n".join(parts).strip()
+    if payload.get("output_text"):
+        return str(payload["output_text"]).strip()
+    return "No text response was returned."
 
+
+def call_llm(api_key: str, model: str, snapshot: dict, messages: list[dict[str, str]]) -> str:
     input_messages = [
         {
             "role": "user",
@@ -436,16 +448,29 @@ def call_llm(api_key: str, model: str, snapshot: dict, messages: list[dict[str, 
         },
         *messages[-10:],
     ]
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
-        model=model,
-        instructions=LLM_INSTRUCTIONS,
-        input=input_messages,
-        max_output_tokens=650,
-        truncation="auto",
-        metadata={"feature": "bond-allocation-market-chat"},
+    request_payload = {
+        "model": model,
+        "instructions": LLM_INSTRUCTIONS,
+        "input": input_messages,
+        "max_output_tokens": 650,
+        "truncation": "auto",
+        "metadata": {"feature": "bond-allocation-market-chat"},
+    }
+    request = Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(request_payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
     )
-    return response.output_text.strip()
+    try:
+        with urlopen(request, timeout=45) as response:
+            return extract_response_text(json.loads(response.read().decode("utf-8")))
+    except HTTPError as error:
+        detail = error.read().decode("utf-8")
+        raise RuntimeError(f"OpenAI Responses API HTTP {error.code}: {detail}") from error
 
 
 st.set_page_config(page_title="Dynamic Bond Allocation Assistant", layout="wide")
@@ -550,6 +575,7 @@ for title, explanation in describe_macro_rationale(result, market_data):
 
 st.subheader("AI Market Chat")
 st.caption("Session-only conversation over the current dashboard dataset. This is narrative synthesis, not financial advice.")
+st.caption("LLM transport: direct OpenAI Responses API; payload keys are model, instructions, input, max_output_tokens, truncation, metadata.")
 llm_snapshot = build_llm_snapshot(mandate, result, market_data)
 
 if not openai_key:
