@@ -12,6 +12,10 @@ See [Architecture](docs/architecture.md) for service boundaries and data flow.
 
 PostgreSQL data is retained in the `portfolio_postgres_data` named volume.
 
+## Phase 1 finance slice
+
+The current interface can record individual income events, effective-dated recurring bills, financial goals, and dated goal-progress snapshots. It calculates Budgetable Income, monthly goal funding, sustainable discretionary capacity, and three weekly spending levels. All financial calculations are deterministic and described in the interface. See [Personal-finance model](docs/personal-finance.md) for formulas and API endpoints.
+
 ## Local development
 
 Backend:
