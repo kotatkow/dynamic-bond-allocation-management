@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
         "postgresql+psycopg://portfolio:local-development-only@localhost:5432/"
         "portfolio_intelligence"
     )
-    backend_cors_origins: list[str] = ["http://localhost:3000"]
+    backend_cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
