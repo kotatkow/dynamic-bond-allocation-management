@@ -1,4 +1,39 @@
-# Dynamic Bond Allocation Assistant
+# Personal Portfolio Intelligence Platform
+
+This repository now contains the foundation for a private personal-finance and economic-intelligence application. The active platform is a Next.js frontend, FastAPI backend, and PostgreSQL database. Phase 1 begins with deterministic personal-finance records and recommendations; later intelligence modules are intentionally not implemented yet.
+
+See [Architecture](docs/architecture.md) for service boundaries and data flow.
+
+## Run with Docker Compose
+
+1. Copy `.env.example` to `.env` and replace the local database password.
+2. Run `docker compose up --build`.
+3. Open `http://localhost:3000`. The API is available at `http://localhost:8000/docs`.
+
+PostgreSQL data is retained in the `portfolio_postgres_data` named volume.
+
+## Local development
+
+Backend:
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+Frontend:
+
+```powershell
+cd frontend
+pnpm install
+pnpm dev
+```
+
+## Legacy Streamlit dashboard
 
 A Streamlit-only advisory dashboard for exploring general fixed-income allocation decisions across cash/T-bills, short duration, core bonds, long Treasuries, TIPS, investment-grade credit, and high yield.
 
